@@ -32,47 +32,22 @@ jobs:
       - name: 빌드된 파일 이름 변경
         run: mv ./build/libs/*SNAPSHOT.jar ./project.jar
 
-      - name: SCP로 EC2에 빌드된 파일 전송
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_PRIVATE_KEY }}
-          source: project.jar
-          target: /home/ubuntu/insta-server/tobe
+      - name: 압축하기
+        run: tar -czvf $GITHUB_SHA.tar.gz project.jar appspec.yml scripts
 
-      - name: SSH로 EC2에 접속
-        uses: appleboy/ssh-action@v1.2.2
+      - name: AWS Resource에 접근할 수 있게 AWS credentials 설정
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_PRIVATE_KEY }}
-          envs: APPLICATION_PROPERTIES
-          script_stop: true
-          script: | 
-            rm -rf /home/ubuntu/insta-server/current
-            mkdir /home/ubuntu/insta-server/current
-            mv /home/ubuntu/insta-server/tobe/project.jar /home/ubuntu/insta-server/current/project.jar
-            cd /home/ubuntu/insta-server/current
-            sudo fuser -k -n tcp 8080 || true
-            nohup java -jar project.jar > output.log 2>&1 &
-            rm -rf /home/ubuntu/insta-server/tobe
+          aws-region: ap-northeast-2
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-#      - name: SSH로 EC2에 접속
-#        uses: appleboy/ssh-action@v1.2.2
-#        env:
-#          APPLICATION_PROPERTIES: ${{ secrets.APPLICATION_PROPERTIES }}
-#        with:
-#          host: ${{ secrets.EC2_HOST }}
-#          username: ${{ secrets.EC2_USERNAME }}
-#          key: ${{ secrets.EC2_PRIVATE_KEY }}
-#          envs: APPLICATION_PROPERTIES
-#          script_stop: true
-#          script: |
-#            cd /home/ubuntu/insta-sever
-#            rm -rf src/main/resources/application.yml
-#            git pull origin main
-#            echo "$APPLICATION_PROPERTIES" > src/main/resources/application.yml
-#            ./gradlew clean build
-#            sudo fuser -k -n tcp 8080 || true
-#            nohup java -jar build/libs/*SNAPSHOT.jar > output.log 2>&1 &
+      - name: s3에 프로젝트 폴더 업로드
+        run: aws s3 cp --region ap-northeast-2 ./$GITHUB_SHA.tar.gz s3://insta-server/$GITHUB_SHA.tar.gz
+
+      - name: codeDeploy를 활용하여 EC2에 프로젝트 코드를 배포하라고 명령
+        run: aws deploy create-deployment
+          --application-name insta-server
+          --deployment-config-name CodeDeployDefault.AllAtOnce
+          --deployment-group-name Production
+          --s3-location bucket=insta-server,bundleType=tgz,key=$GITHUB_SHA.tar.gz
